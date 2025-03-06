@@ -49,51 +49,43 @@ def select_tool(tool_name):
     go_to_config()
 
 # Função para processar OCR com OCR.Space
-def process_ocrspace(file_bytes, config, api_key):
-    try:
-        if not api_key:
-            return "Chave de API não fornecida para OCR.Space."
+def process_ocrspace(file_bytes, file_type, config, api_key):
+    if not api_key:
+        return "Chave de API não fornecida para OCR.Space."
 
-        payload = {
-            'apikey': api_key,
-            'language': config['language'],
-            'isOverlayRequired': config['isOverlayRequired'],
-            'detectOrientation': config['detectOrientation'],
-            'scale': config['scale'],
-            'OCREngine': config['OCREngine']
-        }
+    if len(file_bytes) > 1000000:  # 1MB (limite para contas gratuitas)
+        return "Erro: O arquivo excede o limite de 1MB permitido para contas gratuitas no OCR.Space."
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-            tmp.write(file_bytes)
-            tmp_filename = tmp.name
+    payload = {
+        'apikey': api_key,
+        'language': config['language'],
+        'isOverlayRequired': config['isOverlayRequired'],
+        'detectOrientation': config['detectOrientation'],
+        'scale': config['scale'],
+        'OCREngine': config['OCREngine']
+    }
 
-        with open(tmp_filename, 'rb') as f:
-            files = {'file': f}
-            response = requests.post(
-                'https://api.ocr.space/parse/image',
-                files=files,
-                data=payload
-            )
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_type) as tmp:
+        tmp.write(file_bytes)
+        tmp_filename = tmp.name
 
-        os.unlink(tmp_filename)
+    with open(tmp_filename, 'rb') as f:
+        files = {'file': f}
+        response = requests.post('https://api.ocr.space/parse/image', files=files, data=payload)
 
-        if response.status_code == 200:
-            result_json = response.json()
-            if result_json.get('IsErroredOnProcessing'):
-                return f"Erro da API OCR.Space: {result_json.get('ErrorMessage', 'Erro desconhecido')}"
-            
-            extracted_text = ""
-            for parsed_result in result_json.get('ParsedResults', []):
-                extracted_text += parsed_result.get('ParsedText', '')
+    os.unlink(tmp_filename)
 
-            return extracted_text if extracted_text else "Nenhum texto foi extraído."
-        else:
-            return f"Erro HTTP {response.status_code}: {response.text}"
+    if response.status_code != 200:
+        return f"Erro HTTP {response.status_code}: {response.text}"
 
-    except requests.exceptions.RequestException as e:
-        return f"Erro de conexão com OCR.Space: {str(e)}"
-    except Exception as e:
-        return f"Erro inesperado ao processar OCR: {str(e)}"
+    result_json = response.json()
+
+    if result_json.get('IsErroredOnProcessing'):
+        return f"Erro do OCR.Space: {result_json.get('ErrorMessage', 'Erro desconhecido')}"
+    
+    extracted_text = "\n".join([res.get('ParsedText', '') for res in result_json.get('ParsedResults', [])])
+
+    return extracted_text if extracted_text.strip() else "Nenhum texto foi extraído."
 
 # Função principal para processamento de OCR
 def process_ocr(uploaded_file):
@@ -101,9 +93,13 @@ def process_ocr(uploaded_file):
         return "Por favor, faça o upload de um arquivo."
 
     file_bytes = uploaded_file.getvalue()
+    file_type = os.path.splitext(uploaded_file.name)[-1].lower()
+
+    if file_type not in [".jpg", ".jpeg", ".png", ".pdf", ".tiff", ".bmp"]:
+        return "Erro: Formato de arquivo não suportado. Use JPG, PNG, PDF, TIFF ou BMP."
 
     if st.session_state.selected_tool == "OCR.Space":
-        return process_ocrspace(file_bytes, st.session_state.config, st.session_state.api_key)
+        return process_ocrspace(file_bytes, file_type, st.session_state.config, st.session_state.api_key)
     else:
         return "Ferramenta não selecionada ou não suportada."
 
@@ -164,13 +160,9 @@ def render_config():
             format_func=lambda x: {
                 1: "Motor 1 (Mais rápido)",
                 2: "Motor 2 (Mais preciso)",
-                3: "Motor 3 (Multi-idioma)"
+                3: "Motor 3 (Para PDFs e multi-idioma)"
             }[x]
         )
-
-        st.session_state.config['detectOrientation'] = st.checkbox("Detectar orientação", value=True)
-        st.session_state.config['isOverlayRequired'] = st.checkbox("Requisitar sobreposição", value=True)
-        st.session_state.config['scale'] = st.checkbox("Escalar imagem", value=True)
 
     col1, col2 = st.columns(2)
     with col1:
