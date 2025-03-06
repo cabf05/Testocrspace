@@ -53,8 +53,8 @@ def process_ocrspace(file_bytes, file_type, config, api_key):
     if not api_key:
         return "Chave de API não fornecida para OCR.Space."
 
-    if len(file_bytes) > 1000000:  # 1MB (limite para contas gratuitas)
-        return "Erro: O arquivo excede o limite de 1MB permitido para contas gratuitas no OCR.Space."
+    if len(file_bytes) > 5 * 1024 * 1024:  # 5MB (novo limite)
+        return "Erro: O arquivo excede o limite de 5MB permitido no OCR.Space."
 
     payload = {
         'apikey': api_key,
@@ -69,23 +69,25 @@ def process_ocrspace(file_bytes, file_type, config, api_key):
         tmp.write(file_bytes)
         tmp_filename = tmp.name
 
-    with open(tmp_filename, 'rb') as f:
-        files = {'file': f}
-        response = requests.post('https://api.ocr.space/parse/image', files=files, data=payload)
+    try:
+        with open(tmp_filename, 'rb') as f:
+            files = {'file': f}
+            response = requests.post('https://api.ocr.space/parse/image', files=files, data=payload)
 
-    os.unlink(tmp_filename)
+        if response.status_code != 200:
+            return f"Erro HTTP {response.status_code}: {response.text}"
 
-    if response.status_code != 200:
-        return f"Erro HTTP {response.status_code}: {response.text}"
+        result_json = response.json()
 
-    result_json = response.json()
+        if result_json.get('IsErroredOnProcessing'):
+            return f"Erro do OCR.Space: {result_json.get('ErrorMessage', 'Erro desconhecido')}"
+        
+        extracted_text = "\n".join([res.get('ParsedText', '') for res in result_json.get('ParsedResults', [])])
 
-    if result_json.get('IsErroredOnProcessing'):
-        return f"Erro do OCR.Space: {result_json.get('ErrorMessage', 'Erro desconhecido')}"
+        return extracted_text if extracted_text.strip() else "Nenhum texto foi extraído."
     
-    extracted_text = "\n".join([res.get('ParsedText', '') for res in result_json.get('ParsedResults', [])])
-
-    return extracted_text if extracted_text.strip() else "Nenhum texto foi extraído."
+    finally:
+        os.unlink(tmp_filename)
 
 # Função principal para processamento de OCR
 def process_ocr(uploaded_file):
